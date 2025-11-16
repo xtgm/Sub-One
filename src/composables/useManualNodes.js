@@ -144,9 +144,11 @@ export function useManualNodes(initialNodesRef, markDirty) {
   }
 
   function deleteAllNodes() {
-    manualNodes.value = [];
-    manualNodesCurrentPage.value = 1;
-  }
+  
+  manualNodes.value.splice(0, manualNodes.value.length);
+  manualNodesCurrentPage.value = 1;
+  searchTerm.value = ''; 
+}
 
   function addNodesFromBulk(nodes) {
     manualNodes.value.unshift(...nodes);
