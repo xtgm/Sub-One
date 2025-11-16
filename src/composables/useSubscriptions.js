@@ -3,6 +3,9 @@ import { ref, computed, watch } from 'vue';
 import { fetchNodeCount, batchUpdateNodes } from '../lib/api.js';
 import { useToastStore } from '../stores/toast.js';
 
+// 优化：预编译正则表达式，提升性能
+const HTTP_REGEX = /^https?:\/\//;
+
 export function useSubscriptions(initialSubsRef, markDirty) {
   const { showToast } = useToastStore();
   const subscriptions = ref([]);
@@ -41,7 +44,7 @@ export function useSubscriptions(initialSubsRef, markDirty) {
 
   async function handleUpdateNodeCount(subId, isInitialLoad = false) {
     const subToUpdate = subscriptions.value.find(s => s.id === subId);
-    if (!subToUpdate || !subToUpdate.url.startsWith('http')) return;
+    if (!subToUpdate || !HTTP_REGEX.test(subToUpdate.url)) return;
     
     if (!isInitialLoad) {
         subToUpdate.isUpdating = true;
@@ -53,7 +56,7 @@ export function useSubscriptions(initialSubsRef, markDirty) {
       subToUpdate.userInfo = data.userInfo || null;
       
       if (!isInitialLoad) {
-        showToast(`${subToUpdate.name || '订阅'} 更新成功！`, 'success');
+        showToast(`${subToUpdate.name || '订阅'} 已更新`, 'success');
       }
     } catch (error) {
       if (!isInitialLoad) showToast(`${subToUpdate.name || '订阅'} 更新失败`, 'error');
@@ -94,9 +97,10 @@ export function useSubscriptions(initialSubsRef, markDirty) {
   }
 
   function deleteAllSubscriptions() {
-    subscriptions.value = [];
-    subsCurrentPage.value = 1;
-  }
+  
+  subscriptions.value.splice(0, subscriptions.value.length);
+  subsCurrentPage.value = 1;
+}
   
   // {{ AURA-X: Modify - 使用批量更新API优化批量导入. Approval: 寸止(ID:1735459200). }}
   // [优化] 批量導入使用批量更新API，减少KV写入次数
@@ -107,7 +111,7 @@ export function useSubscriptions(initialSubsRef, markDirty) {
     subsCurrentPage.value = 1;
 
     // 过滤出需要更新的订阅（只有http/https链接）
-    const subsToUpdate = subs.filter(sub => sub.url && sub.url.startsWith('http'));
+    const subsToUpdate = subs.filter(sub => sub.url && HTTP_REGEX.test(sub.url));
 
     if (subsToUpdate.length > 0) {
       showToast(`正在批量更新 ${subsToUpdate.length} 个订阅...`, 'success');
