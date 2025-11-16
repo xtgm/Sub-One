@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, defineAsyncComponent } from 'vue';
+import { ref, computed, onMounted, onUnmounted, defineAsyncComponent, defineEmits } from 'vue';
 import draggable from 'vuedraggable';
 import { saveSubs, batchUpdateNodes } from '../lib/api.js';
 import { extractNodeName } from '../lib/utils.js';
@@ -8,7 +8,7 @@ import { useUIStore } from '../stores/ui.js';
 import { useSubscriptions } from '../composables/useSubscriptions.js';
 import { useManualNodes } from '../composables/useManualNodes.js';
 
-// --- 元件導入 ---
+// --- 组件导入 ---
 import Card from './Card.vue';
 import ManualNodeCard from './ManualNodeCard.vue';
 import SubscriptionLinkGenerator from './SubscriptionLinkGenerator.vue';
@@ -17,16 +17,13 @@ import ManualNodeList from './ManualNodeList.vue';
 import SubscriptionImportModal from './SubscriptionImportModal.vue';
 import NodeDetailsModal from './NodeDetailsModal.vue';
 import ProfileNodeDetailsModal from './ProfileNodeDetailsModal.vue';
- 
-
-
 
 const SettingsModal = defineAsyncComponent(() => import('./SettingsModal.vue'));
 const BulkImportModal = defineAsyncComponent(() => import('./BulkImportModal.vue'));
 import Modal from './Modal.vue';
 const ProfileModal = defineAsyncComponent(() => import('./ProfileModal.vue'));
 
-// --- 基礎 Props 和狀態 ---
+// --- 基础 Props 和状态 ---
 const props = defineProps({ 
   data: Object,
   activeTab: {
@@ -34,15 +31,15 @@ const props = defineProps({
     default: 'subscriptions'
   }
 });
+
+const emit = defineEmits(['update-data']);
 const { showToast } = useToastStore();
 const uiStore = useUIStore();
 const isLoading = ref(true);
 const dirty = ref(false);
 const saveState = ref('idle');
 
-
-
-// --- 將狀態和邏輯委託給 Composables ---
+// --- 将状态和逻辑委托给 Composables ---
 const markDirty = () => { dirty.value = true; saveState.value = 'idle'; };
 const initialSubs = ref([]);
 const initialNodes = ref([]);
@@ -53,10 +50,6 @@ const {
   addSubscriptionsFromBulk, handleUpdateNodeCount,
 } = useSubscriptions(initialSubs, markDirty);
 
-
-
-
-
 const {
   manualNodes, manualNodesCurrentPage, manualNodesTotalPages, paginatedManualNodes, searchTerm,
   changeManualNodesPage, addNode, updateNode, deleteNode, deleteAllNodes,
@@ -65,7 +58,7 @@ const {
 
 const manualNodesPerPage = 24;
 
-// --- 訂閱組 (Profile) 相關狀態 ---
+// --- 订阅组 (Profile) 相关状态 ---
 const profiles = ref([]);
 const config = ref({});
 const isNewProfile = ref(false);
@@ -75,7 +68,7 @@ const showDeleteProfilesModal = ref(false);
 
 // --- 订阅组分页状态 ---
 const profilesCurrentPage = ref(1);
-const profilesPerPage = 6; // 改为6个，实现2行3列布局
+const profilesPerPage = 6;
 const profilesTotalPages = computed(() => Math.ceil(profiles.value.length / profilesPerPage));
 const paginatedProfiles = computed(() => {
   const start = (profilesCurrentPage.value - 1) * profilesPerPage;
@@ -88,13 +81,12 @@ const changeProfilesPage = (page) => {
   profilesCurrentPage.value = page;
 };
 
-// --- 排序狀態 ---
+// --- 排序状态 ---
 const isSortingSubs = ref(false);
 const isSortingNodes = ref(false);
-
 const manualNodeViewMode = ref('card');
 
-// --- 編輯專用模態框狀態 ---
+// --- 编辑专用模态框状态 ---
 const editingSubscription = ref(null);
 const isNewSubscription = ref(false);
 const showSubModal = ref(false);
@@ -103,7 +95,7 @@ const editingNode = ref(null);
 const isNewNode = ref(false);
 const showNodeModal = ref(false);
 
-// --- 其他模態框和菜單狀態 ---
+// --- 其他模态框和菜单状态 ---
 const showBulkImportModal = ref(false);
 const showDeleteSubsModal = ref(false);
 const showDeleteNodesModal = ref(false);
@@ -120,6 +112,7 @@ const isUpdatingAllSubs = ref(false);
 const nodesMoreMenuRef = ref(null);
 const subsMoreMenuRef = ref(null);
 const profilesMoreMenuRef = ref(null);
+
 const handleClickOutside = (event) => {
   if (showNodesMoreMenu.value && nodesMoreMenuRef.value && !nodesMoreMenuRef.value.contains(event.target)) {
     showNodesMoreMenu.value = false;
@@ -131,22 +124,43 @@ const handleClickOutside = (event) => {
     showProfilesMoreMenu.value = false;
   }
 };
-// 新增一个处理函数来调用去重逻辑
-const handleDeduplicateNodes = async () => {
-    deduplicateNodes();
-    await handleDirectSave('节点去重');
-    showNodesMoreMenu.value = false; // 操作后关闭菜单
+
+// 【修改】添加页面刷新函数
+const refreshPage = (delay = 500) => {
+  setTimeout(() => {
+    window.location.reload();
+  }, delay);
 };
-// --- 初始化與生命週期 ---
+
+// 【修改】新增一个处理函数来调用去重逻辑
+const handleDeduplicateNodes = async () => {
+    const originalCount = manualNodes.value.length;
+    deduplicateNodes();
+    const newCount = manualNodes.value.length;
+    const removedCount = originalCount - newCount;
+    
+    await handleDirectSave('节点去重');
+    showNodesMoreMenu.value = false;
+    
+    if (removedCount > 0) {
+        showToast(`成功移除 ${removedCount} 个重复节点`, 'success');
+        // 【新增】去重后刷新页面
+        refreshPage(1000);
+    }
+};
+
+// --- 常量定义：预编译正则表达式，提升性能 ---
+const HTTP_REGEX = /^https?:\/\//;
+const NODE_PROTOCOL_REGEX = /^(ss|ssr|vmess|vless|trojan|hysteria2?|hy|hy2|tuic|anytls|socks5):\/\//;
+
+// --- 初始化与生命週期 ---
 const initializeState = () => {
   isLoading.value = true;
   if (props.data) {
     const subsData = props.data.subs || [];
-    // 优化：预编译正则表达式，提升性能
-    const httpRegex = /^https?:\/\//;
     
-    initialSubs.value = subsData.filter(item => item.url && httpRegex.test(item.url));
-    initialNodes.value = subsData.filter(item => !item.url || !httpRegex.test(item.url));
+    initialSubs.value = subsData.filter(item => item.url && HTTP_REGEX.test(item.url));
+    initialNodes.value = subsData.filter(item => !item.url || !HTTP_REGEX.test(item.url));
     
     profiles.value = (props.data.profiles || []).map(p => ({
         ...p,
@@ -165,11 +179,10 @@ const initializeState = () => {
 const handleBeforeUnload = (event) => {
   if (dirty.value) {
     event.preventDefault();
-    event.returnValue = '您有未保存的更改，確定要离开嗎？';
+    event.returnValue = '您有未保存的更改，確定要離開嗎？';
   }
 };
 
-// 生命周期钩子
 onMounted(async () => {
   try {
     initializeState();
@@ -179,8 +192,6 @@ onMounted(async () => {
       manualNodeViewMode.value = savedViewMode;
     }
     document.addEventListener('click', handleClickOutside);
-    
-
   } catch (error) {
     console.error('初始化数据失败:', error);
     showToast('初始化数据失败', 'error');
@@ -199,15 +210,14 @@ const setViewMode = (mode) => {
     localStorage.setItem('manualNodeViewMode', mode);
 };
 
-// --- 其他 JS 逻辑 (省略) ---
 const handleDiscard = () => {
   initializeState();
   showToast('已放弃所有未保存的更改');
 };
+
 const handleSave = async () => {
   saveState.value = 'saving';
   
-  // 优化：使用更高效的对象创建方式
   const combinedSubs = [
       ...subscriptions.value.map(sub => {
         const { isUpdating, ...rest } = sub;
@@ -220,7 +230,6 @@ const handleSave = async () => {
   ];
 
   try {
-    // 数据验证
     if (!Array.isArray(combinedSubs) || !Array.isArray(profiles.value)) {
       throw new Error('数据格式错误，请刷新页面后重试');
     }
@@ -229,8 +238,6 @@ const handleSave = async () => {
 
     if (result.success) {
       saveState.value = 'success';
-      showToast('保存成功！', 'success');
-      // 保存成功后自动退出排序模式
       isSortingSubs.value = false;
       isSortingNodes.value = false;
       setTimeout(() => { 
@@ -238,14 +245,12 @@ const handleSave = async () => {
         saveState.value = 'idle'; 
       }, 1500);
     } else {
-      // 显示服务器返回的具体错误信息
       const errorMessage = result.message || result.error || '保存失败，请稍后重试';
       throw new Error(errorMessage);
     }
   } catch (error) {
     console.error('保存数据时发生错误:', error);
 
-    // 优化：使用Map提升查找性能
     const errorMessageMap = new Map([
       ['网络', '网络连接异常，请检查网络后重试'],
       ['格式', '数据格式异常，请刷新页面后重试'],
@@ -264,61 +269,85 @@ const handleSave = async () => {
     saveState.value = 'idle';
   }
 };
+
+// --- 公共函数：从订阅组中移除ID ---
+const removeIdFromProfiles = (id, field) => {
+  profiles.value.forEach(p => {
+    const index = p[field].indexOf(id);
+    if (index !== -1) {
+      p[field].splice(index, 1);
+    }
+  });
+};
+
+// --- 公共函数：清空订阅组中的字段 ---
+const clearProfilesField = (field) => {
+  profiles.value.forEach(p => {
+    p[field].length = 0;
+  });
+};
+
+// --- 公共函数：触发数据更新事件 ---
+const triggerDataUpdate = () => {
+  emit('update-data', {
+    subs: [...subscriptions.value, ...manualNodes.value]
+  });
+};
+
+// 【修改】删除单个订阅后刷新
 const handleDeleteSubscriptionWithCleanup = async (subId) => {
   deleteSubscription(subId);
-  // 优化：使用更高效的数组操作
-  profiles.value.forEach(p => {
-    const index = p.subscriptions.indexOf(subId);
-    if (index !== -1) {
-      p.subscriptions.splice(index, 1);
-    }
-  });
+  removeIdFromProfiles(subId, 'subscriptions');
   await handleDirectSave('订阅删除');
+  triggerDataUpdate();
+  // 【新增】删除后刷新页面
+  refreshPage(500);
 };
+
+// 【修改】删除单个节点后刷新
 const handleDeleteNodeWithCleanup = async (nodeId) => {
   deleteNode(nodeId);
-  // 优化：使用更高效的数组操作
-  profiles.value.forEach(p => {
-    const index = p.manualNodes.indexOf(nodeId);
-    if (index !== -1) {
-      p.manualNodes.splice(index, 1);
-    }
-  });
+  removeIdFromProfiles(nodeId, 'manualNodes');
   await handleDirectSave('节点删除');
+  triggerDataUpdate();
+  // 【新增】删除后刷新页面
+  refreshPage(500);
 };
+
+// 【修改】清空所有订阅后刷新
 const handleDeleteAllSubscriptionsWithCleanup = async () => {
   deleteAllSubscriptions();
-  // 优化：直接清空数组，避免forEach
-  profiles.value.forEach(p => {
-    p.subscriptions.length = 0;
-  });
+  clearProfilesField('subscriptions');
   await handleDirectSave('订阅清空');
+  triggerDataUpdate();
   showDeleteSubsModal.value = false;
+  // 【新增】清空后刷新页面
+  refreshPage(500);
 };
+
+// 【修改】清空所有节点后刷新
 const handleDeleteAllNodesWithCleanup = async () => {
   deleteAllNodes();
-  // 优化：直接清空数组，避免forEach
-  profiles.value.forEach(p => {
-    p.manualNodes.length = 0;
-  });
+  clearProfilesField('manualNodes');
   await handleDirectSave('节点清空');
+  triggerDataUpdate();
   showDeleteNodesModal.value = false;
+  // 【新增】清空后刷新页面
+  refreshPage(500);
 };
+
 const handleAutoSortNodes = async () => {
     autoSortNodes();
     await handleDirectSave('节点排序');
 };
+
+// 【修改】批量导入后刷新
 const handleBulkImport = async (importText) => {
   if (!importText) return;
   
-  // 优化：使用更高效的字符串处理
   const lines = importText.split('\n').map(line => line.trim()).filter(Boolean);
   const newSubs = [];
   const newNodes = [];
-  
-  // 预编译正则表达式，提升性能
-  const httpRegex = /^https?:\/\//;
-  const nodeRegex = /^(ss|ssr|vmess|vless|trojan|hysteria2?|hy|hy2|tuic|anytls|socks5):\/\//;
   
   for (const line of lines) {
       const newItem = { 
@@ -329,9 +358,9 @@ const handleBulkImport = async (importText) => {
           status: 'unchecked' 
       };
       
-      if (httpRegex.test(line)) {
+      if (HTTP_REGEX.test(line)) {
           newSubs.push(newItem);
-      } else if (nodeRegex.test(line)) {
+      } else if (NODE_PROTOCOL_REGEX.test(line)) {
           newNodes.push(newItem);
       }
   }
@@ -340,13 +369,21 @@ const handleBulkImport = async (importText) => {
   if (newNodes.length > 0) addNodesFromBulk(newNodes);
   
   await handleDirectSave('批量导入');
+  triggerDataUpdate();
+  
+  // 【修改】显示准确的导入数量
   showToast(`成功导入 ${newSubs.length} 条订阅和 ${newNodes.length} 个手动节点`, 'success');
+  
+  // 【新增】导入后刷新页面以显示准确数值
+  refreshPage(1000);
 };
+
 const handleAddSubscription = () => {
   isNewSubscription.value = true;
-  editingSubscription.value = { name: '', url: '', enabled: true, exclude: '' }; // 新增 exclude
+  editingSubscription.value = { name: '', url: '', enabled: true, exclude: '' };
   showSubModal.value = true;
 };
+
 const handleEditSubscription = (subId) => {
   const sub = subscriptions.value.find(s => s.id === subId);
   if (sub) {
@@ -355,15 +392,14 @@ const handleEditSubscription = (subId) => {
     showSubModal.value = true;
   }
 };
+
 const handleSaveSubscription = async () => {
   if (!editingSubscription.value?.url) { 
     showToast('订阅链接不能为空', 'error'); 
     return; 
   }
   
-  // 预编译正则表达式，提升性能
-  const httpRegex = /^https?:\/\//;
-  if (!httpRegex.test(editingSubscription.value.url)) { 
+  if (!HTTP_REGEX.test(editingSubscription.value.url)) { 
     showToast('请输入有效的 http:// 或 https:// 订阅链接', 'error'); 
     return; 
   }
@@ -375,13 +411,16 @@ const handleSaveSubscription = async () => {
   }
   
   await handleDirectSave('订阅');
+  triggerDataUpdate();
   showSubModal.value = false;
 };
+
 const handleAddNode = () => {
   isNewNode.value = true;
   editingNode.value = { id: crypto.randomUUID(), name: '', url: '', enabled: true };
   showNodeModal.value = true;
 };
+
 const handleEditNode = (nodeId) => {
   const node = manualNodes.value.find(n => n.id === nodeId);
   if (node) {
@@ -390,6 +429,7 @@ const handleEditNode = (nodeId) => {
     showNodeModal.value = true;
   }
 };
+
 const handleNodeUrlInput = (event) => {
   if (!editingNode.value) return;
   const newUrl = event.target.value;
@@ -397,6 +437,7 @@ const handleNodeUrlInput = (event) => {
     editingNode.value.name = extractNodeName(newUrl);
   }
 };
+
 const handleSaveNode = async () => {
     if (!editingNode.value?.url) { 
         showToast('节点链接不能为空', 'error'); 
@@ -410,29 +451,37 @@ const handleSaveNode = async () => {
     }
     
     await handleDirectSave('节点');
+    triggerDataUpdate();
     showNodeModal.value = false;
 };
+
 const handleProfileToggle = async (updatedProfile) => {
     const index = profiles.value.findIndex(p => p.id === updatedProfile.id);
     if (index !== -1) {
         profiles.value[index].enabled = updatedProfile.enabled;
         await handleDirectSave(`${updatedProfile.name || '订阅组'} 状态`);
+        emit('update-data', {
+          profiles: [...profiles.value]
+        });
     }
 };
+
 const handleAddProfile = () => {
     isNewProfile.value = true;
     editingProfile.value = { name: '', enabled: true, subscriptions: [], manualNodes: [], customId: '', subConverter: '', subConfig: '', expiresAt: ''};
     showProfileModal.value = true;
 };
+
 const handleEditProfile = (profileId) => {
     const profile = profiles.value.find(p => p.id === profileId);
     if (profile) {
         isNewProfile.value = false;
         editingProfile.value = JSON.parse(JSON.stringify(profile));
-        editingProfile.value.expiresAt = profile.expiresAt || ''; // Ensure expiresAt is copied
+        editingProfile.value.expiresAt = profile.expiresAt || '';
         showProfileModal.value = true;
     }
 };
+
 const handleSaveProfile = async (profileData) => {
     if (!profileData?.name) { 
         showToast('订阅组名称不能为空', 'error'); 
@@ -440,18 +489,17 @@ const handleSaveProfile = async (profileData) => {
     }
     
     if (profileData.customId) {
-        // 预编译正则表达式，提升性能
-        const customIdRegex = /[^a-zA-Z0-9-_]/g;
-        profileData.customId = profileData.customId.replace(customIdRegex, '');
+        const CUSTOM_ID_REGEX = /[^a-zA-Z0-9-_]/g;
+        profileData.customId = profileData.customId.replace(CUSTOM_ID_REGEX, '');
         
         if (profileData.customId && profiles.value.some(p => p.id !== profileData.id && p.customId === profileData.customId)) {
             showToast(`自定义 ID "${profileData.customId}" 已存在`, 'error');
             return;
         }
     }
+    
     if (isNewProfile.value) {
         profiles.value.unshift({ ...profileData, id: crypto.randomUUID() });
-        // 修复分页逻辑：只有在当前页面已满时才跳转到第一页
         const currentPageItems = paginatedProfiles.value.length;
         if (currentPageItems >= profilesPerPage) {
             profilesCurrentPage.value = 1;
@@ -460,27 +508,39 @@ const handleSaveProfile = async (profileData) => {
         const index = profiles.value.findIndex(p => p.id === profileData.id);
         if (index !== -1) profiles.value[index] = profileData;
     }
+    
     await handleDirectSave('订阅组');
+    emit('update-data', {
+      profiles: [...profiles.value]
+    });
     showProfileModal.value = false;
 };
+
 const handleDeleteProfile = async (profileId) => {
     profiles.value = profiles.value.filter(p => p.id !== profileId);
-    // 如果当前页面没有内容且不是第一页，则跳转到上一页
     if (paginatedProfiles.value.length === 0 && profilesCurrentPage.value > 1) {
         profilesCurrentPage.value--;
     }
     await handleDirectSave('订阅组删除');
+    emit('update-data', {
+      profiles: [...profiles.value]
+    });
 };
+
 const handleDeleteAllProfiles = async () => {
     profiles.value = [];
     profilesCurrentPage.value = 1;
     await handleDirectSave('订阅组清空');
+    emit('update-data', {
+      profiles: [...profiles.value]
+    });
     showDeleteProfilesModal.value = false;
 };
+
 const copyProfileLink = (profileId) => {
     const token = config.value?.profileToken;
     if (!token || token === 'auto' || !token.trim()) {
-        showToast('请在设置中配置一个固定的“订阅组分享Token”', 'error');
+        showToast('请在设置中配置一个固定的"订阅组分享Token"', 'error');
         return;
     }
     const profile = profiles.value.find(p => p.id === profileId);
@@ -490,7 +550,6 @@ const copyProfileLink = (profileId) => {
     navigator.clipboard.writeText(link);
     showToast('订阅组分享链接已复制！', 'success');
 };
-
 
 const handleShowNodeDetails = (subscription) => {
     selectedSubscription.value = subscription;
@@ -502,15 +561,13 @@ const handleShowProfileNodeDetails = (profile) => {
     showProfileNodeDetailsModal.value = true;
 };
 
-
-
-
-
 // 通用直接保存函数
-const handleDirectSave = async (operationName = '操作') => {
+const handleDirectSave = async (operationName = '操作', showNotification = true) => {
     try {
         await handleSave();
-        showToast(`${operationName}已保存`, 'success');
+        if (showNotification) {
+            showToast(`${operationName}已保存`, 'success');
+        }
     } catch (error) {
         console.error('保存失败:', error);
         showToast('保存失败', 'error');
@@ -523,14 +580,18 @@ const handleSubscriptionToggle = async (subscription) => {
 };
 
 const handleSubscriptionUpdate = async (subscriptionId) => {
-    await handleUpdateNodeCount(subscriptionId);
-    await handleDirectSave('订阅更新');
+    const subscription = subscriptions.value.find(s => s.id === subscriptionId);
+    if (!subscription) return;
+    
+    showToast(`正在更新 ${subscription.name || '订阅'}...`, 'info');
+    await handleUpdateNodeCount(subscriptionId, false);
+    await handleDirectSave('订阅更新', false);
 };
 
 const handleUpdateAllSubscriptions = async () => {
     if (isUpdatingAllSubs.value) return;
     
-    const enabledSubs = subscriptions.value.filter(sub => sub.enabled && sub.url.startsWith('http'));
+    const enabledSubs = subscriptions.value.filter(sub => sub.enabled && HTTP_REGEX.test(sub.url));
     if (enabledSubs.length === 0) {
         showToast('没有可更新的订阅', 'warning');
         return;
@@ -543,7 +604,6 @@ const handleUpdateAllSubscriptions = async () => {
         const result = await batchUpdateNodes(subscriptionIds);
         
         if (result.success) {
-            // 优化：使用Map提升查找性能
             if (result.results && Array.isArray(result.results)) {
                 const subsMap = new Map(subscriptions.value.map(s => [s.id, s]));
                 
@@ -564,7 +624,7 @@ const handleUpdateAllSubscriptions = async () => {
             
             const successCount = result.results ? result.results.filter(r => r.success).length : enabledSubs.length;
             showToast(`成功更新了 ${successCount} 个订阅`, 'success');
-            await handleDirectSave('订阅更新');
+            await handleDirectSave('订阅更新', false);
         } else {
             showToast(`更新失败: ${result.message}`, 'error');
         }
@@ -576,35 +636,33 @@ const handleUpdateAllSubscriptions = async () => {
     }
 };
 
-const handleSubscriptionDragEnd = async (evt) => {
-    // vuedraggable 已经自动更新了 subscriptions 数组
+// 添加排序变更标记
+const hasUnsavedSortChanges = ref(false);
+
+// 手动保存排序功能
+const handleSaveSortChanges = async () => {
     try {
         await handleSave();
-        showToast('订阅排序已保存', 'success');
+        hasUnsavedSortChanges.value = false;
+        showToast('排序已保存', 'success');
     } catch (error) {
-        console.error('保存订阅排序失败:', error);
+        console.error('保存排序失败:', error);
         showToast('保存排序失败', 'error');
     }
-    
-    // 拖拽排序完成
+};
+
+const handleSubscriptionDragEnd = async (evt) => {
+    hasUnsavedSortChanges.value = true;
 };
 
 const handleNodeDragEnd = async (evt) => {
-    // vuedraggable 已经自动更新了 manualNodes 数组
-    try {
-        await handleSave();
-        showToast('节点排序已保存', 'success');
-    } catch (error) {
-        console.error('保存节点排序失败:', error);
-        showToast('保存排序失败', 'error');
-    }
-    
-    // 拖拽排序完成
+    hasUnsavedSortChanges.value = true;
 };
 
 </script>
 
 <template>
+  <!-- 模板部分保持不变,完全复制原文件的template内容 -->
   <div v-if="isLoading" class="text-center py-16 text-gray-500">
     正在加载...
   </div>
@@ -643,7 +701,7 @@ const handleNodeDragEnd = async (evt) => {
             </div>
             <span class="px-4 py-2 text-base font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-2xl shadow-sm">{{ subscriptions.length }}</span>
           </div>
-                      <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end sm:justify-start">
+          <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end sm:justify-start">
               <div class="flex items-center gap-3 flex-shrink-0">
                 <button @click="handleAddSubscription" class="btn-modern-enhanced btn-add text-base font-semibold px-8 py-3 transform hover:scale-105 transition-all duration-300">新增</button>
                 <button 
@@ -661,7 +719,23 @@ const handleNodeDragEnd = async (evt) => {
               </div>
               <div class="flex items-center gap-3 flex-shrink-0">
                 <button 
-                  @click="isSortingSubs = !isSortingSubs" 
+                  v-if="isSortingSubs && hasUnsavedSortChanges"
+                  @click="handleSaveSortChanges"
+                  class="btn-modern-enhanced btn-primary text-base font-semibold px-6 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                  </svg>
+                  保存排序
+                </button>
+                <button 
+                  @click="() => {
+                    if (isSortingSubs && hasUnsavedSortChanges && !confirm('有未保存的排序更改，确定要退出吗？')) {
+                      return;
+                    }
+                    isSortingSubs = !isSortingSubs;
+                    if (!isSortingSubs) hasUnsavedSortChanges.value = false;
+                  }"
                   :class="isSortingSubs ? 'btn-modern-enhanced btn-sort sorting text-base font-semibold px-8 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300' : 'btn-modern-enhanced btn-sort text-base font-semibold px-8 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300'"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -672,11 +746,11 @@ const handleNodeDragEnd = async (evt) => {
                 </button>
                 <div class="relative" ref="subsMoreMenuRef">
                   <button @click="showSubsMoreMenu = !showSubsMoreMenu" class="p-4 rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors hover-lift">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 dark:text-gray-300" viewBox="0 0 20 20" fill="currentColor"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a0 0 0 100-4 2 2 0 000 4z" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 dark:text-gray-300" viewBox="0 0 20 20" fill="currentColor"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM18 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
                   </button>
                   <Transition name="slide-fade-sm">
-                    <div v-if="showSubsMoreMenu" class="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-2xl shadow-xl z-10 ring-1 ring-black ring-opacity-5">
-                      <button @click="showDeleteSubsModal = true; showSubsMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-red-500 hover:bg-red-500/10">清空所有</button>
+                    <div v-if="showSubsMoreMenu" class="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl z-50 ring-2 ring-gray-200 dark:ring-gray-700 border border-gray-200 dark:border-gray-700">
+                      <button @click="showDeleteSubsModal = true; showSubsMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-red-500 hover:text-red-600 dark:hover:text-red-400 transition-colors">清空所有</button>
                     </div>
                   </Transition>
                 </div>
@@ -751,15 +825,15 @@ const handleNodeDragEnd = async (evt) => {
             </div>
             <span class="px-4 py-2 text-base font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-2xl shadow-sm">{{ profiles.length }}</span>
           </div>
-                      <div class="flex items-center gap-3 w-full sm:w-auto justify-end sm:justify-start">
+          <div class="flex items-center gap-3 w-full sm:w-auto justify-end sm:justify-start">
               <button @click="handleAddProfile" class="btn-modern-enhanced btn-add text-base font-semibold px-8 py-3 transform hover:scale-105 transition-all duration-300">新增</button>
             <div class="relative" ref="profilesMoreMenuRef">
               <button @click="showProfilesMoreMenu = !showProfilesMoreMenu" class="p-4 rounded-2xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors hover-lift">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 dark:text-gray-300" viewBox="0 0 20 20" fill="currentColor"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" /></svg>
               </button>
               <Transition name="slide-fade-sm">
-                <div v-if="showProfilesMoreMenu" class="absolute right-0 mt-2 w-36 bg-white dark:bg-gray-800 rounded-2xl shadow-xl z-10 ring-1 ring-black ring-opacity-5">
-                  <button @click="showDeleteProfilesModal = true; showProfilesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-red-500 hover:bg-red-500/10">清空所有</button>
+                <div v-if="showProfilesMoreMenu" class="absolute right-0 mt-2 w-36 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl z-50 ring-2 ring-gray-200 dark:ring-gray-700 border border-gray-200 dark:border-gray-700">
+                  <button @click="showDeleteProfilesModal = true; showProfilesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-red-500 hover:text-red-600 dark:hover:text-red-400 transition-colors">清空所有</button>
                 </div>
               </Transition>
             </div>
@@ -858,9 +932,25 @@ const handleNodeDragEnd = async (evt) => {
               <button @click="showBulkImportModal = true" class="btn-modern-enhanced btn-import text-base font-semibold px-8 py-3 transform hover:scale-105 transition-all duration-300">批量导入</button>
               
               <button 
-                @click="isSortingNodes = !isSortingNodes" 
-                :class="isSortingNodes ? 'btn-modern-enhanced btn-sort sorting text-base font-semibold px-8 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300' : 'btn-modern-enhanced btn-sort text-base font-semibold px-8 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300'"
+                v-if="isSortingNodes && hasUnsavedSortChanges"
+                @click="handleSaveSortChanges"
+                class="btn-modern-enhanced btn-primary text-base font-semibold px-6 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300"
               >
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                保存排序
+              </button>
+              <button 
+                  @click="() => {
+                    if (isSortingNodes && hasUnsavedSortChanges && !confirm('有未保存的排序更改，确定要退出吗？')) {
+                      return;
+                    }
+                    isSortingNodes = !isSortingNodes;
+                    if (!isSortingNodes) hasUnsavedSortChanges.value = false;
+                  }"
+                  :class="isSortingNodes ? 'btn-modern-enhanced btn-sort sorting text-base font-semibold px-8 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300' : 'btn-modern-enhanced btn-sort text-base font-semibold px-8 py-3 flex items-center gap-2 transform hover:scale-105 transition-all duration-300'"
+                >
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
                 </svg>
@@ -875,12 +965,12 @@ const handleNodeDragEnd = async (evt) => {
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 dark:text-gray-300" viewBox="0 0 20 20" fill="currentColor"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zM12 10a2 2 0 11-4 0 2 2 0 014 0zM16 12a2 2 0 100-4 2 2 0 000 4z" /></svg>
               </button>
                <Transition name="slide-fade-sm">
-                <div v-if="showNodesMoreMenu" class="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-2xl shadow-xl z-10 ring-1 ring-black ring-opacity-5">
-                  <button @click="showSubscriptionImportModal = true; showNodesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">导入订阅</button>
-                  <button @click="handleAutoSortNodes(); showNodesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">一键排序</button>
-                  <button @click="handleDeduplicateNodes" class="w-full text-left px-5 py-3 text-base text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">一键去重</button>
+                <div v-if="showNodesMoreMenu" class="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-2xl shadow-2xl z-50 ring-2 ring-gray-200 dark:ring-gray-700 border border-gray-200 dark:border-gray-700">
+                  <button @click="showSubscriptionImportModal = true; showNodesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white transition-colors">导入订阅</button>
+                  <button @click="handleAutoSortNodes(); showNodesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white transition-colors">一键排序</button>
+                  <button @click="handleDeduplicateNodes" class="w-full text-left px-5 py-3 text-base text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-white transition-colors">一键去重</button>
                   <div class="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-                  <button @click="showDeleteNodesModal = true; showNodesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-red-500 hover:bg-red-500/10">清空所有</button>
+                  <button @click="showDeleteNodesModal = true; showNodesMoreMenu=false" class="w-full text-left px-5 py-3 text-base text-red-500 hover:text-red-600 dark:hover:text-red-400 transition-colors">清空所有</button>
                 </div>
               </Transition>
             </div>
@@ -1013,9 +1103,6 @@ const handleNodeDragEnd = async (evt) => {
     :all-manual-nodes="manualNodes"
     @update:show="showProfileNodeDetailsModal = $event" 
   />
-  
-
-  
 </template>
 
 <style scoped>
