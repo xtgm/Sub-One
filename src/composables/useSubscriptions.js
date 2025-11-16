@@ -90,11 +90,15 @@ export function useSubscriptions(initialSubsRef, markDirty) {
   }
 
   function deleteSubscription(subId) {
-    subscriptions.value = subscriptions.value.filter((s) => s.id !== subId);
-    if (paginatedSubscriptions.value.length === 0 && subsCurrentPage.value > 1) {
-      subsCurrentPage.value--;
-    }
+    const index = subscriptions.value.findIndex(s => s.id === subId);
+    if (index !== -1) {
+      subscriptions.value.splice(index, 1);
   }
+
+    if (paginatedSubscriptions.value.length === 0 && subsCurrentPage.value > 1) {
+    subsCurrentPage.value--;
+  }
+}
 
   function deleteAllSubscriptions() {
   
