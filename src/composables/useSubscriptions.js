@@ -20,16 +20,15 @@ export function useSubscriptions(initialSubsRef, markDirty) {
       nodeCount: sub.nodeCount || 0,
       isUpdating: false,
       userInfo: sub.userInfo || null,
-      exclude: sub.exclude || '', // 新增 exclude 属性
+      exclude: sub.exclude || '',
     }));
-    // [最終修正] 移除此處的自動更新迴圈，以防止本地開發伺服器因併發請求過多而崩潰。
-    // subscriptions.value.forEach(sub => handleUpdateNodeCount(sub.id, true)); 
   }
+
+  // 【关键修复】新增实时总数计算属性，用于绑定顶部导航数字
+  const totalSubscriptionCount = computed(() => subscriptions.value.length);
 
   const enabledSubscriptions = computed(() => subscriptions.value.filter(s => s.enabled));
   
-
-
   const subsTotalPages = computed(() => Math.ceil(subscriptions.value.length / subsItemsPerPage));
   const paginatedSubscriptions = computed(() => {
     const start = (subsCurrentPage.value - 1) * subsItemsPerPage;
@@ -67,15 +66,20 @@ export function useSubscriptions(initialSubsRef, markDirty) {
   }
 
   function addSubscription(sub) {
+    // 1. 插入数据，Vue 的 ref 会自动触发 totalSubscriptionCount 更新
     subscriptions.value.unshift(sub);
-    // 新增订阅时，如果当前页面未满，保持在当前页面；如果已满，跳转到第一页
+    
+    // 2. 处理分页：如果当前页满了，跳回第一页看到最新的
     const currentPageItems = paginatedSubscriptions.value.length;
     if (currentPageItems >= subsItemsPerPage) {
-      // 当前页面已满，跳转到第一页
       subsCurrentPage.value = 1;
     }
-    // 如果当前页面未满，保持在当前页面，新订阅会自动显示在当前页面
-    handleUpdateNodeCount(sub.id); // 新增時自動更新單個
+    
+    // 3. 自动获取节点数
+    handleUpdateNodeCount(sub.id); 
+
+    // 4. 标记界面为“有未保存的更改”
+    if (markDirty) markDirty();
   }
 
   function updateSubscription(updatedSub) {
@@ -83,9 +87,10 @@ export function useSubscriptions(initialSubsRef, markDirty) {
     if (index !== -1) {
       if (subscriptions.value[index].url !== updatedSub.url) {
         updatedSub.nodeCount = 0;
-        handleUpdateNodeCount(updatedSub.id); // URL 變更時自動更新單個
+        handleUpdateNodeCount(updatedSub.id); 
       }
       subscriptions.value[index] = updatedSub;
+      if (markDirty) markDirty();
     }
   }
 
@@ -93,71 +98,55 @@ export function useSubscriptions(initialSubsRef, markDirty) {
     const index = subscriptions.value.findIndex(s => s.id === subId);
     if (index !== -1) {
       subscriptions.value.splice(index, 1);
-  }
+      if (markDirty) markDirty();
+    }
 
     if (paginatedSubscriptions.value.length === 0 && subsCurrentPage.value > 1) {
-    subsCurrentPage.value--;
+      subsCurrentPage.value--;
+    }
   }
-}
 
   function deleteAllSubscriptions() {
+    subscriptions.value.splice(0, subscriptions.value.length);
+    subsCurrentPage.value = 1;
+    if (markDirty) markDirty();
+  }
   
-  subscriptions.value.splice(0, subscriptions.value.length);
-  subsCurrentPage.value = 1;
-}
-  
-  // {{ AURA-X: Modify - 使用批量更新API优化批量导入. Approval: 寸止(ID:1735459200). }}
-  // [优化] 批量導入使用批量更新API，减少KV写入次数
   async function addSubscriptionsFromBulk(subs) {
     subscriptions.value.unshift(...subs);
-    
-    // 修复分页逻辑：批量添加后跳转到第一页
     subsCurrentPage.value = 1;
+    
+    if (markDirty) markDirty();
 
-    // 过滤出需要更新的订阅（只有http/https链接）
     const subsToUpdate = subs.filter(sub => sub.url && HTTP_REGEX.test(sub.url));
 
     if (subsToUpdate.length > 0) {
       showToast(`正在批量更新 ${subsToUpdate.length} 个订阅...`, 'success');
-
       try {
         const result = await batchUpdateNodes(subsToUpdate.map(sub => sub.id));
 
         if (result.success) {
-          // 优化：使用Map提升查找性能
           const subsMap = new Map(subscriptions.value.map(s => [s.id, s]));
-          
           result.results.forEach(updateResult => {
             if (updateResult.success) {
               const sub = subsMap.get(updateResult.id);
               if (sub) {
-                if (typeof updateResult.nodeCount === 'number') {
-                  sub.nodeCount = updateResult.nodeCount;
-                }
-                if (updateResult.userInfo) {
-                  sub.userInfo = updateResult.userInfo;
-                }
+                if (typeof updateResult.nodeCount === 'number') sub.nodeCount = updateResult.nodeCount;
+                if (updateResult.userInfo) sub.userInfo = updateResult.userInfo;
               }
             }
           });
-
           const successCount = result.results.filter(r => r.success).length;
           showToast(`批量更新完成！成功更新 ${successCount}/${subsToUpdate.length} 个订阅`, 'success');
         } else {
           showToast(`批量更新失败: ${result.message}`, 'error');
-          // 降级到逐个更新
           showToast('正在降级到逐个更新模式...', 'info');
-          for(const sub of subsToUpdate) {
-            await handleUpdateNodeCount(sub.id);
-          }
+          for(const sub of subsToUpdate) await handleUpdateNodeCount(sub.id);
         }
       } catch (error) {
         console.error('Batch update failed:', error);
         showToast('批量更新失败，正在降级到逐个更新...', 'error');
-        // 降级到逐个更新
-        for(const sub of subsToUpdate) {
-          await handleUpdateNodeCount(sub.id);
-        }
+        for(const sub of subsToUpdate) await handleUpdateNodeCount(sub.id);
       }
     } else {
       showToast('批量导入完成！', 'success');
@@ -174,6 +163,7 @@ export function useSubscriptions(initialSubsRef, markDirty) {
     subsTotalPages,
     paginatedSubscriptions,
     enabledSubscriptionsCount: computed(() => enabledSubscriptions.value.length),
+    totalSubscriptionCount, // 【导出这个新变量】
     changeSubsPage,
     addSubscription,
     updateSubscription,
