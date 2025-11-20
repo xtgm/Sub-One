@@ -44,16 +44,18 @@ const markDirty = () => { dirty.value = true; saveState.value = 'idle'; };
 const initialSubs = ref([]);
 const initialNodes = ref([]);
 
+// 解构出 totalSubscriptionCount
 const {
   subscriptions, subsCurrentPage, subsTotalPages, paginatedSubscriptions,
   changeSubsPage, addSubscription, updateSubscription, deleteSubscription, deleteAllSubscriptions,
-  addSubscriptionsFromBulk, handleUpdateNodeCount,
+  addSubscriptionsFromBulk, handleUpdateNodeCount, totalSubscriptionCount
 } = useSubscriptions(initialSubs, markDirty);
 
+// 解构出 totalManualNodeCount
 const {
   manualNodes, manualNodesCurrentPage, manualNodesTotalPages, paginatedManualNodes, searchTerm,
   changeManualNodesPage, addNode, updateNode, deleteNode, deleteAllNodes,
-  addNodesFromBulk, autoSortNodes, deduplicateNodes,
+  addNodesFromBulk, autoSortNodes, deduplicateNodes, totalManualNodeCount
 } = useManualNodes(initialNodes, markDirty);
 
 const manualNodesPerPage = 24;
@@ -125,14 +127,16 @@ const handleClickOutside = (event) => {
   }
 };
 
-// 【修改】添加页面刷新函数
-const refreshPage = (delay = 500) => {
+// 【核心修复】安全刷新页面的函数
+// 先清除 dirty 状态，防止浏览器弹出"您有未保存更改"的提示
+const reloadPage = (delay = 500) => {
+  dirty.value = false; // 关键：禁止弹窗
   setTimeout(() => {
     window.location.reload();
   }, delay);
 };
 
-// 【修改】新增一个处理函数来调用去重逻辑
+// 去重逻辑
 const handleDeduplicateNodes = async () => {
     const originalCount = manualNodes.value.length;
     deduplicateNodes();
@@ -143,13 +147,14 @@ const handleDeduplicateNodes = async () => {
     showNodesMoreMenu.value = false;
     
     if (removedCount > 0) {
-        showToast(`成功移除 ${removedCount} 个重复节点`, 'success');
-        // 【新增】去重后刷新页面
-        refreshPage(1000);
+        showToast(`成功移除 ${removedCount} 个重复节点，正在刷新...`, 'success');
+        reloadPage(1000); // 去重后刷新
+    } else {
+        showToast('没有发现重复节点', 'info');
     }
 };
 
-// --- 常量定义：预编译正则表达式，提升性能 ---
+// --- 常量定义 ---
 const HTTP_REGEX = /^https?:\/\//;
 const NODE_PROTOCOL_REGEX = /^(ss|ssr|vmess|vless|trojan|hysteria2?|hy|hy2|tuic|anytls|socks5):\/\//;
 
@@ -250,27 +255,12 @@ const handleSave = async () => {
     }
   } catch (error) {
     console.error('保存数据时发生错误:', error);
-
-    const errorMessageMap = new Map([
-      ['网络', '网络连接异常，请检查网络后重试'],
-      ['格式', '数据格式异常，请刷新页面后重试'],
-      ['存储', '存储服务暂时不可用，请稍后重试']
-    ]);
-    
-    let userMessage = error.message;
-    for (const [key, message] of errorMessageMap) {
-      if (error.message.includes(key)) {
-        userMessage = message;
-        break;
-      }
-    }
-
-    showToast(userMessage, 'error');
+    showToast(error.message, 'error');
     saveState.value = 'idle';
   }
 };
 
-// --- 公共函数：从订阅组中移除ID ---
+// --- 公共函数 ---
 const removeIdFromProfiles = (id, field) => {
   profiles.value.forEach(p => {
     const index = p[field].indexOf(id);
@@ -280,68 +270,60 @@ const removeIdFromProfiles = (id, field) => {
   });
 };
 
-// --- 公共函数：清空订阅组中的字段 ---
 const clearProfilesField = (field) => {
   profiles.value.forEach(p => {
     p[field].length = 0;
   });
 };
 
-// --- 公共函数：触发数据更新事件 ---
 const triggerDataUpdate = () => {
   emit('update-data', {
     subs: [...subscriptions.value, ...manualNodes.value]
   });
 };
 
-// 【修改】删除单个订阅后刷新
+// 【核心修复】删除订阅：删除 -> 保存 -> 刷新
 const handleDeleteSubscriptionWithCleanup = async (subId) => {
   deleteSubscription(subId);
   removeIdFromProfiles(subId, 'subscriptions');
   await handleDirectSave('订阅删除');
-  triggerDataUpdate();
-  // 【新增】删除后刷新页面
-  refreshPage(500);
+  // 强制刷新，确保数字同步
+  reloadPage(500);
 };
 
-// 【修改】删除单个节点后刷新
+// 【核心修复】删除节点：删除 -> 保存 -> 刷新
 const handleDeleteNodeWithCleanup = async (nodeId) => {
   deleteNode(nodeId);
   removeIdFromProfiles(nodeId, 'manualNodes');
   await handleDirectSave('节点删除');
-  triggerDataUpdate();
-  // 【新增】删除后刷新页面
-  refreshPage(500);
+  // 强制刷新
+  reloadPage(500);
 };
 
-// 【修改】清空所有订阅后刷新
+// 【核心修复】清空订阅
 const handleDeleteAllSubscriptionsWithCleanup = async () => {
   deleteAllSubscriptions();
   clearProfilesField('subscriptions');
   await handleDirectSave('订阅清空');
-  triggerDataUpdate();
   showDeleteSubsModal.value = false;
-  // 【新增】清空后刷新页面
-  refreshPage(500);
+  reloadPage(500);
 };
 
-// 【修改】清空所有节点后刷新
+// 【核心修复】清空节点
 const handleDeleteAllNodesWithCleanup = async () => {
   deleteAllNodes();
   clearProfilesField('manualNodes');
   await handleDirectSave('节点清空');
-  triggerDataUpdate();
   showDeleteNodesModal.value = false;
-  // 【新增】清空后刷新页面
-  refreshPage(500);
+  reloadPage(500);
 };
 
 const handleAutoSortNodes = async () => {
     autoSortNodes();
     await handleDirectSave('节点排序');
+    reloadPage(500); // 排序后也刷新一下，保险
 };
 
-// 【修改】批量导入后刷新
 const handleBulkImport = async (importText) => {
   if (!importText) return;
   
@@ -370,12 +352,8 @@ const handleBulkImport = async (importText) => {
   
   await handleDirectSave('批量导入');
   triggerDataUpdate();
-  
-  // 【修改】显示准确的导入数量
-  showToast(`成功导入 ${newSubs.length} 条订阅和 ${newNodes.length} 个手动节点`, 'success');
-  
-  // 【新增】导入后刷新页面以显示准确数值
-  refreshPage(1000);
+  showToast(`成功导入 ${newSubs.length} 条订阅和 ${newNodes.length} 个手动节点，正在刷新...`, 'success');
+  reloadPage(1000);
 };
 
 const handleAddSubscription = () => {
@@ -411,8 +389,9 @@ const handleSaveSubscription = async () => {
   }
   
   await handleDirectSave('订阅');
-  triggerDataUpdate();
   showSubModal.value = false;
+  // 新增或编辑后刷新，保证同步
+  reloadPage(500);
 };
 
 const handleAddNode = () => {
@@ -451,8 +430,9 @@ const handleSaveNode = async () => {
     }
     
     await handleDirectSave('节点');
-    triggerDataUpdate();
     showNodeModal.value = false;
+    // 新增或编辑后刷新
+    reloadPage(500);
 };
 
 const handleProfileToggle = async (updatedProfile) => {
@@ -662,7 +642,7 @@ const handleNodeDragEnd = async (evt) => {
 </script>
 
 <template>
-  <!-- 模板部分保持不变,完全复制原文件的template内容 -->
+  <!-- 模板部分 -->
   <div v-if="isLoading" class="text-center py-16 text-gray-500">
     正在加载...
   </div>
@@ -699,7 +679,7 @@ const handleNodeDragEnd = async (evt) => {
               <h2 class="text-2xl lg:text-3xl font-bold gradient-text-enhanced">订阅管理</h2>
               <p class="text-base lg:text-lg text-gray-500 dark:text-gray-400">管理您的机场订阅</p>
             </div>
-            <span class="px-4 py-2 text-base font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-2xl shadow-sm">{{ subscriptions.length }}</span>
+            <span class="px-4 py-2 text-base font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-2xl shadow-sm">{{ totalSubscriptionCount }}</span>
           </div>
           <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end sm:justify-start">
               <div class="flex items-center gap-3 flex-shrink-0">
@@ -898,7 +878,7 @@ const handleNodeDragEnd = async (evt) => {
               <h2 class="text-2xl lg:text-3xl font-bold gradient-text-enhanced">手动节点</h2>
               <p class="text-base lg:text-lg text-gray-500 dark:text-gray-400">管理单个节点链接</p>
             </div>
-            <span class="px-4 py-2 text-base font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-2xl shadow-sm">{{ manualNodes.length }}</span>
+            <span class="px-4 py-2 text-base font-semibold text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-700/50 rounded-2xl shadow-sm">{{ totalManualNodeCount }}</span>
           </div>
           
           <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end sm:justify-start">
