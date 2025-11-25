@@ -1241,18 +1241,51 @@ export async function onRequest(context) {
     const { request, env, next } = context;
     const url = new URL(request.url);
 
-    // **核心修改：判斷是否為定時觸發**
+    // 1. 处理定时任务 (保持不变)
     if (request.headers.get("cf-cron")) {
         return handleCronTrigger(env);
     }
 
+    // 2. [新增] 核心修复：添加缺失的代理转发逻辑
+    // 当 Clash 访问 /proxyip=xxx 时，将流量转发到目标地址
+    if (url.pathname.startsWith('/proxyip=')) {
+        const proxyTarget = url.pathname.split('=')[1];
+        
+        if (!proxyTarget) {
+            return new Response('Invalid Proxy Target', { status: 400 });
+        }
+
+        try {
+            // 构建指向目标节点的请求
+            // 这里我们将请求原样转发给目标 (即 tw.sni2025...)
+            // 并保留 WebSocket 升级头 (Upgrade: websocket)
+            const newUrl = new URL(`https://${proxyTarget}/`);
+            
+            // 复制原始请求及其 Headers
+            const newRequest = new Request(newUrl, new Request(request));
+            
+            // 强制设置 Host 头为目标地址，防止 Cloudflare 拒绝
+            newRequest.headers.set('Host', proxyTarget);
+
+            // 发起转发 (fetch 会自动处理 WebSocket 握手)
+            return fetch(newRequest);
+        } catch (e) {
+            return new Response(`Proxy Error: ${e.message}`, { status: 502 });
+        }
+    }
+
+    // 3. 处理 API 请求 (保持不变)
     if (url.pathname.startsWith('/api/')) {
         const response = await handleApiRequest(request, env);
         return response;
     }
+
+    // 4. 处理静态资源 (保持不变)
     const isStaticAsset = /^\/(assets|@vite|src)\/./.test(url.pathname) || /\.\w+$/.test(url.pathname);
     if (!isStaticAsset && url.pathname !== '/') {
         return handleSubRequest(context);
     }
+
+    // 5. 其他情况继续执行 (保持不变)
     return next();
 }
