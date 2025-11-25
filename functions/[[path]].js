@@ -1241,7 +1241,7 @@ export async function onRequest(context) {
     const { request, env, next } = context;
     const url = new URL(request.url);
 
-    // 1. 处理定时任务 (保持不变)
+    // 1. 处理定时任务
     if (request.headers.get("cf-cron")) {
         return handleCronTrigger(env);
     }
@@ -1257,8 +1257,6 @@ export async function onRequest(context) {
 
         try {
             // 构建指向目标节点的请求
-            // 这里我们将请求原样转发给目标 (即 tw.sni2025...)
-            // 并保留 WebSocket 升级头 (Upgrade: websocket)
             const newUrl = new URL(`https://${proxyTarget}/`);
             
             // 复制原始请求及其 Headers
@@ -1274,18 +1272,18 @@ export async function onRequest(context) {
         }
     }
 
-    // 3. 处理 API 请求 (保持不变)
+    // 3. 处理 API 请求
     if (url.pathname.startsWith('/api/')) {
         const response = await handleApiRequest(request, env);
         return response;
     }
 
-    // 4. 处理静态资源 (保持不变)
+    // 4. 处理静态资源
     const isStaticAsset = /^\/(assets|@vite|src)\/./.test(url.pathname) || /\.\w+$/.test(url.pathname);
     if (!isStaticAsset && url.pathname !== '/') {
         return handleSubRequest(context);
     }
 
-    // 5. 其他情况继续执行 (保持不变)
+    // 5. 其他情况继续执行
     return next();
 }
