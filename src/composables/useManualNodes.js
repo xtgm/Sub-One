@@ -2,12 +2,23 @@
 import { ref, computed, watch } from 'vue';
 import { useToastStore } from '../stores/toast.js';
 
-export function useManualNodes(initialNodesRef, markDirty) {
+// 【修改】新增第三个参数 triggerAutoSave
+export function useManualNodes(initialNodesRef, markDirty, triggerAutoSave) {
   const { showToast } = useToastStore();
   const manualNodes = ref([]);
   const manualNodesCurrentPage = ref(1);
   const manualNodesPerPage = 24;
   const searchTerm = ref('');
+
+  // 辅助函数：执行保存并刷新（如果有提供回调）
+  const tryAutoSave = async (msg) => {
+    if (typeof triggerAutoSave === 'function') {
+        if(msg) showToast(msg, 'success');
+        await triggerAutoSave(); // 调用外部传入的保存并刷新逻辑
+    } else {
+        if (markDirty) markDirty(); // 如果没有配置自动保存，则回退到原来的“标记为未保存”
+    }
+  };
 
   // 国家/地区代码映射 (保持原样)
   const countryCodeMap = {
@@ -35,7 +46,6 @@ export function useManualNodes(initialNodesRef, markDirty) {
     }));
   }
 
-  // 【关键修复】新增实时节点总数
   const totalManualNodeCount = computed(() => manualNodes.value.length);
 
   const filteredManualNodes = computed(() => {
@@ -74,14 +84,14 @@ export function useManualNodes(initialNodesRef, markDirty) {
     if (currentPageItems >= manualNodesPerPage) {
       manualNodesCurrentPage.value = 1;
     }
-    if (markDirty) markDirty();
+    tryAutoSave('节点已添加，正在保存...'); // 【修改】自动保存
   }
 
   function updateNode(updatedNode) {
     const index = manualNodes.value.findIndex(n => n.id === updatedNode.id);
     if (index !== -1) {
       manualNodes.value[index] = updatedNode;
-      if (markDirty) markDirty();
+      if (markDirty) markDirty(); // 编辑通常比较频繁，可以先不强制刷新，或者你也改成 tryAutoSave
     }
   }
 
@@ -89,7 +99,8 @@ export function useManualNodes(initialNodesRef, markDirty) {
     const index = manualNodes.value.findIndex(n => n.id === nodeId);
     if (index !== -1) {
       manualNodes.value.splice(index, 1);
-      if (markDirty) markDirty();
+      // 【修改】删除后尝试自动保存并刷新
+      tryAutoSave('节点已删除，正在保存并刷新...');
     }
     
     if (paginatedManualNodes.value.length === 0 && manualNodesCurrentPage.value > 1) {
@@ -101,13 +112,13 @@ export function useManualNodes(initialNodesRef, markDirty) {
     manualNodes.value.splice(0, manualNodes.value.length);
     manualNodesCurrentPage.value = 1;
     searchTerm.value = '';
-    if (markDirty) markDirty();
+    tryAutoSave('所有手动节点已清空，正在刷新...'); // 【修改】自动保存
   }
 
   function addNodesFromBulk(nodes) {
     manualNodes.value.unshift(...nodes);
     manualNodesCurrentPage.value = 1;
-    if (markDirty) markDirty();
+    tryAutoSave('批量导入成功，正在保存...'); // 【修改】自动保存
   }
 
   const getUniqueKey = (url) => {
@@ -143,14 +154,14 @@ export function useManualNodes(initialNodesRef, markDirty) {
     manualNodes.value = uniqueNodes;
     const removedCount = originalCount - uniqueNodes.length;
     if (removedCount > 0) {
-      showToast(`成功移除 ${removedCount} 个重复节点。`, 'success');
-      if (markDirty) markDirty();
+      tryAutoSave(`成功移除 ${removedCount} 个重复节点，正在保存...`); // 【修改】自动保存
     } else {
       showToast('没有发现重复的节点。', 'info');
     }
   }
 
   function autoSortNodes() {
+    // ... (保持排序逻辑不变)
     const regionKeywords = {
       HK: [/香港/, /HK/, /Hong Kong/i], TW: [/台湾/, /TW/, /Taiwan/i], SG: [/新加坡/, /SG/, /Singapore/i],
       JP: [/日本/, /JP/, /Japan/i], US: [/美国/, /US/, /United States/i], KR: [/韩国/, /KR/, /Korea/i],
@@ -177,7 +188,8 @@ export function useManualNodes(initialNodesRef, markDirty) {
       if (effectiveIndexA !== effectiveIndexB) return effectiveIndexA - effectiveIndexB;
       return a.name.localeCompare(b.name, 'zh-CN');
     });
-    if (markDirty) markDirty();
+
+    tryAutoSave('节点排序完成，正在保存...'); // 【修改】自动保存
   }
 
   watch(searchTerm, () => {
@@ -194,7 +206,7 @@ export function useManualNodes(initialNodesRef, markDirty) {
     manualNodesTotalPages,
     paginatedManualNodes,
     enabledManualNodesCount: computed(() => enabledManualNodes.value.length),
-    totalManualNodeCount, // 【导出这个新变量】
+    totalManualNodeCount,
     searchTerm,
     changeManualNodesPage,
     addNode,
