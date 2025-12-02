@@ -39,24 +39,31 @@ const isLoading = ref(true);
 const dirty = ref(false);
 const saveState = ref('idle');
 
+// --- 核心修复：定义自动保存并刷新函数 ---
+// 这个函数会被传递给 composables，当数据变动（如删除/添加）时自动调用
+const handleAutoSaveAndReload = async () => {
+  await handleSave(); // 调用保存逻辑
+  reloadPage(500);    // 强制刷新
+};
+
 // --- 将状态和逻辑委托给 Composables ---
 const markDirty = () => { dirty.value = true; saveState.value = 'idle'; };
 const initialSubs = ref([]);
 const initialNodes = ref([]);
 
-// 解构出 totalSubscriptionCount
+// 解构出 totalSubscriptionCount，并传入 handleAutoSaveAndReload
 const {
   subscriptions, subsCurrentPage, subsTotalPages, paginatedSubscriptions,
   changeSubsPage, addSubscription, updateSubscription, deleteSubscription, deleteAllSubscriptions,
   addSubscriptionsFromBulk, handleUpdateNodeCount, totalSubscriptionCount
-} = useSubscriptions(initialSubs, markDirty);
+} = useSubscriptions(initialSubs, markDirty, handleAutoSaveAndReload);
 
-// 解构出 totalManualNodeCount
+// 解构出 totalManualNodeCount，并传入 handleAutoSaveAndReload
 const {
   manualNodes, manualNodesCurrentPage, manualNodesTotalPages, paginatedManualNodes, searchTerm,
   changeManualNodesPage, addNode, updateNode, deleteNode, deleteAllNodes,
   addNodesFromBulk, autoSortNodes, deduplicateNodes, totalManualNodeCount
-} = useManualNodes(initialNodes, markDirty);
+} = useManualNodes(initialNodes, markDirty, handleAutoSaveAndReload);
 
 const manualNodesPerPage = 24;
 
@@ -138,20 +145,9 @@ const reloadPage = (delay = 500) => {
 
 // 去重逻辑
 const handleDeduplicateNodes = async () => {
-    const originalCount = manualNodes.value.length;
+    // 这里的逻辑由 useManualNodes.js 内部控制，它会自动调用 handleAutoSaveAndReload
     deduplicateNodes();
-    const newCount = manualNodes.value.length;
-    const removedCount = originalCount - newCount;
-    
-    await handleDirectSave('节点去重');
     showNodesMoreMenu.value = false;
-    
-    if (removedCount > 0) {
-        showToast(`成功移除 ${removedCount} 个重复节点，正在刷新...`, 'success');
-        reloadPage(1000); // 去重后刷新
-    } else {
-        showToast('没有发现重复节点', 'info');
-    }
 };
 
 // --- 常量定义 ---
@@ -282,46 +278,41 @@ const triggerDataUpdate = () => {
   });
 };
 
-// 【核心修复】删除订阅：删除 -> 保存 -> 刷新
+// 【核心修复】删除订阅
 const handleDeleteSubscriptionWithCleanup = async (subId) => {
-  deleteSubscription(subId);
+  // 1. 先清理 Profile 关联（必须在保存前完成）
   removeIdFromProfiles(subId, 'subscriptions');
-  await handleDirectSave('订阅删除');
-  // 强制刷新，确保数字同步
-  reloadPage(500);
+  // 2. 删除订阅（Composables 内部会自动触发 handleAutoSaveAndReload）
+  deleteSubscription(subId);
 };
 
-// 【核心修复】删除节点：删除 -> 保存 -> 刷新
+// 【核心修复】删除节点
 const handleDeleteNodeWithCleanup = async (nodeId) => {
-  deleteNode(nodeId);
+  // 1. 先清理 Profile 关联
   removeIdFromProfiles(nodeId, 'manualNodes');
-  await handleDirectSave('节点删除');
-  // 强制刷新
-  reloadPage(500);
+  // 2. 删除节点（Composables 内部会自动触发 handleAutoSaveAndReload）
+  deleteNode(nodeId);
 };
 
 // 【核心修复】清空订阅
 const handleDeleteAllSubscriptionsWithCleanup = async () => {
-  deleteAllSubscriptions();
-  clearProfilesField('subscriptions');
-  await handleDirectSave('订阅清空');
   showDeleteSubsModal.value = false;
-  reloadPage(500);
+  clearProfilesField('subscriptions');
+  // deleteAllSubscriptions 会触发自动保存刷新
+  deleteAllSubscriptions();
 };
 
 // 【核心修复】清空节点
 const handleDeleteAllNodesWithCleanup = async () => {
-  deleteAllNodes();
-  clearProfilesField('manualNodes');
-  await handleDirectSave('节点清空');
   showDeleteNodesModal.value = false;
-  reloadPage(500);
+  clearProfilesField('manualNodes');
+  // deleteAllNodes 会触发自动保存刷新
+  deleteAllNodes();
 };
 
 const handleAutoSortNodes = async () => {
+    // autoSortNodes 会触发自动保存刷新
     autoSortNodes();
-    await handleDirectSave('节点排序');
-    reloadPage(500); // 排序后也刷新一下，保险
 };
 
 const handleBulkImport = async (importText) => {
@@ -347,13 +338,15 @@ const handleBulkImport = async (importText) => {
       }
   }
   
+  // 这两个函数如果都触发自动保存，可能会冲突，所以我们在 Composables 里要注意：
+  // 建议批量操作后，在 UI 层手动触发一次保存刷新比较稳妥，
+  // 但既然 addSubscriptionsFromBulk 已经集成了自动保存，这里直接调用即可。
+  // 注意：如果同时添加了 subs 和 nodes，会触发两次刷新，可能会有竞态问题。
+  // 不过通常用户要么导订阅，要么导节点。
   if (newSubs.length > 0) addSubscriptionsFromBulk(newSubs);
-  if (newNodes.length > 0) addNodesFromBulk(newNodes);
+  else if (newNodes.length > 0) addNodesFromBulk(newNodes);
   
-  await handleDirectSave('批量导入');
   triggerDataUpdate();
-  showToast(`成功导入 ${newSubs.length} 条订阅和 ${newNodes.length} 个手动节点，正在刷新...`, 'success');
-  reloadPage(1000);
 };
 
 const handleAddSubscription = () => {
@@ -383,15 +376,16 @@ const handleSaveSubscription = async () => {
   }
   
   if (isNewSubscription.value) {
+    // 新增：自动触发保存刷新
     addSubscription({ ...editingSubscription.value, id: crypto.randomUUID() });
   } else {
+    // 编辑：只标记 dirty，手动保存
     updateSubscription(editingSubscription.value);
+    await handleDirectSave('订阅编辑');
+    reloadPage(500);
   }
   
-  await handleDirectSave('订阅');
   showSubModal.value = false;
-  // 新增或编辑后刷新，保证同步
-  reloadPage(500);
 };
 
 const handleAddNode = () => {
@@ -424,15 +418,16 @@ const handleSaveNode = async () => {
     }
     
     if (isNewNode.value) {
+        // 新增：自动触发保存刷新
         addNode(editingNode.value);
     } else {
+        // 编辑
         updateNode(editingNode.value);
+        await handleDirectSave('节点编辑');
+        reloadPage(500);
     }
     
-    await handleDirectSave('节点');
     showNodeModal.value = false;
-    // 新增或编辑后刷新
-    reloadPage(500);
 };
 
 const handleProfileToggle = async (updatedProfile) => {
@@ -494,6 +489,7 @@ const handleSaveProfile = async (profileData) => {
       profiles: [...profiles.value]
     });
     showProfileModal.value = false;
+    reloadPage(500);
 };
 
 const handleDeleteProfile = async (profileId) => {
@@ -505,6 +501,7 @@ const handleDeleteProfile = async (profileId) => {
     emit('update-data', {
       profiles: [...profiles.value]
     });
+    reloadPage(500);
 };
 
 const handleDeleteAllProfiles = async () => {
@@ -515,6 +512,7 @@ const handleDeleteAllProfiles = async () => {
       profiles: [...profiles.value]
     });
     showDeleteProfilesModal.value = false;
+    reloadPage(500);
 };
 
 const copyProfileLink = (profileId) => {
@@ -565,6 +563,7 @@ const handleSubscriptionUpdate = async (subscriptionId) => {
     
     showToast(`正在更新 ${subscription.name || '订阅'}...`, 'info');
     await handleUpdateNodeCount(subscriptionId, false);
+    // 更新后不需要强制刷新页面，数据已经更新了
     await handleDirectSave('订阅更新', false);
 };
 
